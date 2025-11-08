@@ -1,0 +1,1609 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ProConnect — Full (with Quiz)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--bg:#f3f4f6;--card:#fff;--muted:#6b7280;--accent:#0ea5a4}
+    *{box-sizing:border-box}
+    body{font-family:Inter,ui-sans-serif,system-ui,system-ui,-apple-system,'Segoe UI',Roboto,Arial;margin:0;background:var(--bg);color:#111}
+    header{background:#fff;padding:10px 18px;box-shadow:0 1px 0 rgba(0,0,0,0.05);position:sticky;top:0;z-index:5}
+    .container{max-width:1100px;margin:18px auto;padding:0 16px}
+    .nav{display:flex;align-items:center;gap:12px}
+    .brand{font-weight:700;font-size:20px;color:var(--accent)}
+    nav .menu{margin-left:18px;display:flex;gap:8px}
+    .menu button{background:transparent;border:none;padding:8px 10px;border-radius:8px;cursor:pointer}
+    .menu button:hover{background:#f1f5f9}
+    .layout{display:grid;grid-template-columns:280px 1fr 320px;gap:18px;margin-top:18px}
+    .card{background:var(--card);padding:14px;border-radius:10px;box-shadow:0 6px 18px rgba(13,38,59,0.04)}
+    .profile-small{display:flex;gap:12px;align-items:center}
+    .avatar{width:56px;height:56px;border-radius:999px;background:#e2e8f0;display:inline-flex;align-items:center;justify-content:center;font-weight:700;color:#fff;object-fit:cover}
+    .muted{color:var(--muted);font-size:13px}
+    .btn{background:var(--accent);color:#fff;padding:8px 12px;border:none;border-radius:8px;cursor:pointer}
+    .btn.secondary{background:#fff;color:var(--accent);border:1px solid #d1d5db}
+    .post{border-top:1px solid #eef2f7;padding-top:10px;margin-top:10px}
+    .post-actions{display:flex;gap:12px;margin-top:8px}
+    input,textarea,select{width:100%;padding:8px;border-radius:8px;border:1px solid #e6edf3}
+    textarea{min-height:90px}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .small{font-size:13px}
+    .messages{display:flex;gap:12px}
+    .convos{width:260px}
+    .chat{flex:1;display:flex;flex-direction:column}
+    .msg-list{flex:1;overflow:auto;padding:6px;display:flex;flex-direction:column;gap:8px}
+    .bubble{max-width:70%;padding:8px 10px;border-radius:8px}
+    .bubble.me{align-self:flex-end;background:#dcfce7}
+    .bubble.them{align-self:flex-start;background:#f8fafc}
+    .question{border:1px dashed #e6edf3;padding:10px;border-radius:8px}
+    .option{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px;border-radius:6px;width:100%}
+    .option input{margin-right:8px}
+    .option label{width:100%;display:flex;align-items:center;justify-content:space-between}
+    .weak{color:#b91c1c;font-weight:700}
+    .strong{color:#065f46;font-weight:700}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:left}
+    img.post-img{width:100%;border-radius:8px;margin-top:8px}
+    @media (max-width:980px){.layout{grid-template-columns:1fr;}.container{padding:0 12px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <div class="brand">ProConnect</div>
+      <nav class="menu">
+        <button data-nav="home">Home</button>
+        <button data-nav="projects">Projects</button>
+        <button data-nav="network">My Network</button>
+        <button data-nav="messages">Messages</button>
+        <button data-nav="notifications">Notifications</button>
+        <button data-nav="quiz">Quiz</button>
+        <button data-nav="profile">Profile</button>
+      </nav>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <div id="headerUser" class="muted">Not signed in</div>
+        <button id="btnLogout" class="btn secondary" style="display:none">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="pageContainer"></div>
+  </main>
+
+  <script>
+/* ---------- API CONFIG ---------- */
+const API_BASE = 'http://localhost:3000/api';
+let authToken = localStorage.getItem('token');
+let currentUserData = null;
+
+/* ---------- UTILITIES ---------- */
+const $ = s => document.querySelector(s);
+const create = (t,c)=>Object.assign(document.createElement(t),{className:c||''});
+const escapeHtml = s => s===undefined||s===null ? '' : String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+const initials = n => n ? n.split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase() : 'PC';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+const now = () => Date.now();
+
+// Local storage data
+let posts = JSON.parse(localStorage.getItem('posts') || '[]');
+let conns = JSON.parse(localStorage.getItem('connections') || '[]');
+let notifs = JSON.parse(localStorage.getItem('notifications') || '[]');
+let messages = JSON.parse(localStorage.getItem('messages') || '{}');
+let quizStore = JSON.parse(localStorage.getItem('quizStore') || '{}');
+
+const DB = {
+  POSTS: 'posts',
+  CONNS: 'connections', 
+  NOTIFS: 'notifications',
+  MESSAGES: 'messages',
+  QUIZ: 'quizStore'
+};
+
+function save(key, data) {
+  localStorage.setItem(key, JSON.stringify(data));
+}
+
+async function apiCall(endpoint, options = {}) {
+  const config = { headers: { 'Content-Type': 'application/json' }, ...options };
+  if (authToken) config.headers.Authorization = `Bearer ${authToken}`;
+  
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, config);
+    const text = await response.text();
+    
+    // Check if response is HTML (server not running)
+    if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
+      throw new Error('BACKEND_OFFLINE');
+    }
+    
+    const data = JSON.parse(text);
+    if (!response.ok) throw new Error(data.message || 'API Error');
+    return data;
+  } catch (error) {
+    if (error.name === 'SyntaxError' || error.name === 'TypeError') {
+      throw new Error('BACKEND_OFFLINE');
+    }
+    throw error;
+  }
+}
+
+/* ---------- USER MANAGEMENT ---------- */
+async function loadCurrentUser() {
+  if (!authToken) return null;
+  try {
+    currentUserData = await apiCall('/users/profile');
+    // Load user-specific profile data
+    const userKey = `profile_${currentUserData.email || currentUserData.id}`;
+    const savedProfile = localStorage.getItem(userKey);
+    if (savedProfile) {
+      const parsed = JSON.parse(savedProfile);
+      currentUserData = {...currentUserData, ...parsed};
+    }
+    return currentUserData;
+  } catch (error) {
+    // Create demo user if backend is offline
+    const demoUsers = JSON.parse(localStorage.getItem('demoUsers') || '{}');
+    const userEmail = localStorage.getItem('currentUserEmail');
+    if (userEmail && demoUsers[userEmail]) {
+      currentUserData = demoUsers[userEmail];
+      return currentUserData;
+    }
+    localStorage.removeItem('token');
+    authToken = null;
+    currentUserData = null;
+    return null;
+  }
+}
+
+/* DOM refs */
+const pageContainer = $('#pageContainer');
+const headerUser = $('#headerUser');
+const btnLogout = $('#btnLogout');
+
+/* helpers */
+function currentUser(){ return currentUserData }
+function clearSession(){ localStorage.removeItem('token'); authToken = null; currentUserData = null; renderHeader(); navigate('login'); }
+function renderHeader(){ const u = currentUser(); if(u){ headerUser.textContent = u.fullName; btnLogout.style.display='inline-block'; } else { headerUser.textContent='Not signed in'; btnLogout.style.display='none'; } }
+
+document.querySelectorAll('[data-nav]').forEach(btn=>btn.addEventListener('click', ()=>{ const n = btn.getAttribute('data-nav'); if(n==='home' && !authToken) return navigate('login'); navigate(n); }));
+btnLogout.addEventListener('click', ()=> clearSession() );
+
+function navigate(page){
+  if(page!=='login' && page!=='signup' && !authToken) page='login';
+  pageContainer.innerHTML = '';
+  
+  // Hide/show header based on page
+  const header = document.querySelector('header');
+  if(page === 'login' || page === 'signup') {
+    header.style.display = 'none';
+    document.body.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+    document.body.style.minHeight = '100vh';
+    document.body.style.display = 'flex';
+    document.body.style.alignItems = 'center';
+    document.body.style.justifyContent = 'center';
+  } else {
+    header.style.display = 'block';
+    document.body.style.background = 'var(--bg)';
+    document.body.style.minHeight = 'auto';
+    document.body.style.display = 'block';
+  }
+  
+  if(page==='login') renderLogin();
+  if(page==='signup') renderSignup();
+  if(page==='home') renderHome();
+  if(page==='projects') renderProjects();
+  if(page==='network') renderNetwork();
+  if(page==='messages') renderMessages();
+  if(page==='notifications') renderNotifications();
+  if(page==='profile') renderProfile();
+  if(page==='quiz') renderQuiz();
+}
+
+/* -------------------- PAGES -------------------- */
+
+/* LOGIN */
+function renderLogin(){
+  pageContainer.style.maxWidth = '400px';
+  pageContainer.style.margin = '0';
+  pageContainer.style.padding = '0';
+  
+  const c = create('div');
+  c.style.cssText = 'background:rgba(255,255,255,0.95);padding:40px;border-radius:20px;box-shadow:0 20px 40px rgba(0,0,0,0.1);backdrop-filter:blur(10px);width:100%';
+  c.innerHTML = `
+    <div style="text-align:center;margin-bottom:30px">
+      <h1 style="color:#667eea;font-size:32px;margin:0;font-weight:700">ProConnect</h1>
+      <p style="color:#666;margin:10px 0 0 0;font-size:16px">Connect. Share. Grow.</p>
+    </div>
+    <div style="margin-bottom:20px"><input id="liEmail" placeholder="Email or username" style="width:100%;padding:15px;border:2px solid #e1e5e9;border-radius:12px;font-size:16px;outline:none;transition:all 0.3s" onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e1e5e9'"></div>
+    <div style="margin-bottom:25px"><input id="liPass" placeholder="Password" type="password" style="width:100%;padding:15px;border:2px solid #e1e5e9;border-radius:12px;font-size:16px;outline:none;transition:all 0.3s" onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e1e5e9'"></div>
+    <button id="doLogin" style="width:100%;padding:15px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:20px;transition:transform 0.2s" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">Sign In</button>
+    <div style="text-align:center;color:#666;margin-bottom:15px">Don't have an account?</div>
+    <button id="gotoSignup" style="width:100%;padding:15px;background:transparent;color:#667eea;border:2px solid #667eea;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;transition:all 0.3s" onmouseover="this.style.background='#667eea';this.style.color='white'" onmouseout="this.style.background='transparent';this.style.color='#667eea'">Create Account</button>
+    <div id="loginMsg" style="margin-top:15px;color:#e74c3c;text-align:center;font-size:14px"></div>
+  `;
+  pageContainer.appendChild(c);
+  $('#doLogin').onclick = async ()=> {
+    const email = $('#liEmail').value.trim(), pass = $('#liPass').value;
+    try {
+      const data = await apiCall('/auth/login', { method: 'POST', body: JSON.stringify({ email, password: pass }) });
+      authToken = data.token;
+      localStorage.setItem('token', authToken);
+      localStorage.setItem('currentUserEmail', email);
+      await loadCurrentUser();
+      renderHeader();
+      navigate('home');
+    } catch (error) {
+      // Demo mode - create/login demo user
+      if (error.message === 'BACKEND_OFFLINE') {
+        const demoUsers = JSON.parse(localStorage.getItem('demoUsers') || '{}');
+        if (demoUsers[email]) {
+          authToken = 'demo_token';
+          localStorage.setItem('token', authToken);
+          localStorage.setItem('currentUserEmail', email);
+          await loadCurrentUser();
+          renderHeader();
+          navigate('home');
+        } else {
+          $('#loginMsg').textContent = 'User not found. Please sign up first.';
+        }
+      } else {
+        $('#loginMsg').textContent = error.message;
+      }
+    }
+  }
+  $('#gotoSignup').onclick = ()=> navigate('signup');
+}
+
+/* SIGNUP */
+function renderSignup(){
+  pageContainer.style.maxWidth = '400px';
+  pageContainer.style.margin = '0';
+  pageContainer.style.padding = '0';
+  
+  const c = create('div');
+  c.style.cssText = 'background:rgba(255,255,255,0.95);padding:40px;border-radius:20px;box-shadow:0 20px 40px rgba(0,0,0,0.1);backdrop-filter:blur(10px);width:100%';
+  c.innerHTML = `
+    <div style="text-align:center;margin-bottom:30px">
+      <h1 style="color:#667eea;font-size:32px;margin:0;font-weight:700">Join ProConnect</h1>
+      <p style="color:#666;margin:10px 0 0 0;font-size:16px">Create your professional network</p>
+    </div>
+    <div style="margin-bottom:15px"><input id="suName" placeholder="Full name" style="width:100%;padding:15px;border:2px solid #e1e5e9;border-radius:12px;font-size:16px;outline:none;transition:all 0.3s" onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e1e5e9'"></div>
+    <div style="margin-bottom:15px"><input id="suEmail" placeholder="Email" style="width:100%;padding:15px;border:2px solid #e1e5e9;border-radius:12px;font-size:16px;outline:none;transition:all 0.3s" onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e1e5e9'"></div>
+    <div style="margin-bottom:25px"><input id="suPass" placeholder="Password" type="password" style="width:100%;padding:15px;border:2px solid #e1e5e9;border-radius:12px;font-size:16px;outline:none;transition:all 0.3s" onfocus="this.style.borderColor='#667eea'" onblur="this.style.borderColor='#e1e5e9'"></div>
+    <button id="doSignup" style="width:100%;padding:15px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:20px;transition:transform 0.2s" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">Create Account</button>
+    <div style="text-align:center;color:#666;margin-bottom:15px">Already have an account?</div>
+    <button id="backLogin" style="width:100%;padding:15px;background:transparent;color:#667eea;border:2px solid #667eea;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;transition:all 0.3s" onmouseover="this.style.background='#667eea';this.style.color='white'" onmouseout="this.style.background='transparent';this.style.color='#667eea'">Sign In</button>
+    <div id="signupMsg" style="margin-top:15px;color:#e74c3c;text-align:center;font-size:14px"></div>
+  `;
+  pageContainer.appendChild(c);
+  $('#doSignup').onclick = async ()=> {
+    const name = $('#suName').value.trim(), email = $('#suEmail').value.trim(), pass = $('#suPass').value;
+    if(!name||!email||!pass) { $('#signupMsg').textContent = 'Please fill all fields'; return; }
+    try {
+      const data = await apiCall('/auth/register', { method: 'POST', body: JSON.stringify({ fullName: name, email, password: pass }) });
+      authToken = data.token;
+      localStorage.setItem('token', authToken);
+      localStorage.setItem('currentUserEmail', email);
+      await loadCurrentUser();
+      renderHeader();
+      navigate('home');
+    } catch (error) {
+      // Demo mode - create demo user
+      if (error.message === 'BACKEND_OFFLINE') {
+        const demoUsers = JSON.parse(localStorage.getItem('demoUsers') || '{}');
+        if (demoUsers[email]) {
+          $('#signupMsg').textContent = 'User already exists. Please login.';
+          return;
+        }
+        demoUsers[email] = { id: uid(), fullName: name, email, headline: '', about: '', skills: [] };
+        localStorage.setItem('demoUsers', JSON.stringify(demoUsers));
+        authToken = 'demo_token';
+        localStorage.setItem('token', authToken);
+        localStorage.setItem('currentUserEmail', email);
+        await loadCurrentUser();
+        renderHeader();
+        navigate('home');
+      } else {
+        $('#signupMsg').textContent = error.message;
+      }
+    }
+  }
+  $('#backLogin').onclick = ()=> navigate('login');
+}
+
+/* HOME — posts, post with photo, suggested connections */
+function renderHome(){
+  const layout = create('div'); layout.className = 'layout';
+  const left = create('aside');
+  const user = currentUser();
+  left.innerHTML = `<div class="card profile-small"><div style="flex:1"><div class="avatar">${user?.photo?`<img src="${user.photo}" style="width:100%;height:100%;object-fit:cover">`:`${initials(user?.fullName||'P')}`}</div></div><div style="flex:1"><div style="font-weight:700">${escapeHtml(user?.fullName||'')}</div><div class="muted small">${escapeHtml(user?.headline||'No headline')}</div></div></div>`;
+  const center = create('section');
+  const newPost = create('div'); newPost.className = 'card';
+  newPost.innerHTML = `<div style="font-weight:700;margin-bottom:8px">Create a post</div>
+    <textarea id="postText" placeholder="Share a professional update..."></textarea>
+    <div style="margin-top:8px"><input type="file" id="postImage" accept="image/*"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px"><button id="btnPost" class="btn">Post</button></div>`;
+  center.appendChild(newPost);
+  const feed = create('div'); feed.style.marginTop='12px'; center.appendChild(feed);
+  const right = create('aside'); right.className='card'; right.innerHTML = `<div style="font-weight:700">Suggested connections</div><div id="suggestList" style="margin-top:8px"></div>`;
+  layout.appendChild(left); layout.appendChild(center); layout.appendChild(right); pageContainer.appendChild(layout);
+
+  $('#btnPost').onclick = ()=> {
+    const text = $('#postText').value.trim();
+    const file = $('#postImage').files[0];
+    if(!text && !file) return alert('Post cannot be empty');
+    
+    function createPost(imgData = '') {
+      const user = currentUser();
+      posts.unshift({ id: uid(), authorId: user.id, authorName: user.fullName, text, img: imgData, likes:[], comments:[], ts: now() });
+      
+      // Send notifications to all connections
+      SAMPLE_CONNECTIONS.forEach(conn => {
+        notifs.push({ 
+          id: uid(), 
+          userId: conn.id, 
+          message: `${user.fullName} shared a new post: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`, 
+          ts: now() 
+        });
+      });
+      
+      save(DB.POSTS, posts);
+      save(DB.NOTIFS, notifs);
+      $('#postText').value=''; $('#postImage').value=''; 
+      updateFeed();
+    }
+    
+    if(file){
+      const reader = new FileReader();
+      reader.onload = (e) => createPost(e.target.result);
+      reader.readAsDataURL(file);
+    } else {
+      createPost();
+    }
+  }
+  
+  function updateFeed() {
+    const user = currentUser();
+    feed.innerHTML = posts.map(p=>{
+      const hasLiked = p.likes.includes(user?.id);
+      return `<div class="card post">
+        <div style="display:flex;gap:10px">
+          <div class="avatar">${initials(p.authorName)}</div>
+          <div><div style="font-weight:700">${escapeHtml(p.authorName)}</div>
+          <div class="muted small">${new Date(p.ts).toLocaleString()}</div></div>
+        </div>
+        <div style="margin-top:8px">${escapeHtml(p.text)}</div>
+        ${p.img?`<img src="${p.img}" class="post-img">`:''}
+        <div class="post-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid #f1f5f9">
+          <button onclick="toggleLike('${p.id}')" style="background:none;border:none;color:${hasLiked?'#e74c3c':'#666'};cursor:pointer;margin-right:15px">
+            ❤️ ${p.likes.length} ${hasLiked?'Liked':'Like'}
+          </button>
+  
+          <button onclick="toggleComments('${p.id}')" style="background:none;border:none;color:#666;cursor:pointer">
+            💬 ${p.comments.length} Comments
+          </button>
+        </div>
+        <div id="comments_${p.id}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
+          ${p.comments.map(c=>`<div style="margin-bottom:8px;padding:6px;background:#f8f9fa;border-radius:6px"><strong>${escapeHtml(c.authorName)}:</strong> ${escapeHtml(c.text)}</div>`).join('')}
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="comment_${p.id}" placeholder="Write a comment..." style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px">
+            <button onclick="addComment('${p.id}')" class="btn" style="padding:6px 12px">Post</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  
+  window.toggleLike = function(postId) {
+    const user = currentUser();
+    const post = posts.find(p => p.id === postId);
+    if (!post || !user) return;
+    
+    const likeIndex = post.likes.indexOf(user.id);
+    if (likeIndex > -1) {
+      post.likes.splice(likeIndex, 1);
+    } else {
+      post.likes.push(user.id);
+      // Notify post author
+      if (post.authorId !== user.id) {
+        notifs.push({ id: uid(), userId: post.authorId, message: `${user.fullName} liked your post`, ts: now() });
+        save(DB.NOTIFS, notifs);
+      }
+    }
+    save(DB.POSTS, posts);
+    updateFeed();
+  }
+  
+
+  
+  window.toggleComments = function(postId) {
+    const commentsDiv = document.getElementById(`comments_${postId}`);
+    if (commentsDiv) {
+      commentsDiv.style.display = commentsDiv.style.display === 'none' ? 'block' : 'none';
+    }
+  }
+  
+  window.addComment = function(postId) {
+    const user = currentUser();
+    const commentInput = document.getElementById(`comment_${postId}`);
+    const text = commentInput.value.trim();
+    
+    if (!text || !user) return;
+    
+    const post = posts.find(p => p.id === postId);
+    if (!post) return;
+    
+    post.comments.push({
+      id: uid(),
+      authorId: user.id,
+      authorName: user.fullName,
+      text,
+      ts: now()
+    });
+    
+    // Notify post author
+    if (post.authorId !== user.id) {
+      notifs.push({ id: uid(), userId: post.authorId, message: `${user.fullName} commented on your post: "${text}"`, ts: now() });
+      save(DB.NOTIFS, notifs);
+    }
+    
+    save(DB.POSTS, posts);
+    commentInput.value = '';
+    updateFeed();
+  }
+
+  // render feed
+  feed.innerHTML = posts.map(p=>{
+    const user = currentUser();
+    const hasLiked = p.likes.includes(user?.id);
+    return `<div class="card post">
+      <div style="display:flex;gap:10px">
+        <div class="avatar">${initials(p.authorName)}</div>
+        <div><div style="font-weight:700">${escapeHtml(p.authorName)}</div>
+        <div class="muted small">${new Date(p.ts).toLocaleString()}</div></div>
+      </div>
+      <div style="margin-top:8px">${escapeHtml(p.text)}</div>
+      ${p.img?`<img src="${p.img}" class="post-img">`:''}
+      <div class="post-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid #f1f5f9">
+        <button onclick="toggleLike('${p.id}')" style="background:none;border:none;color:${hasLiked?'#e74c3c':'#666'};cursor:pointer;margin-right:15px">
+          ❤️ ${p.likes.length} ${hasLiked?'Liked':'Like'}
+        </button>
+
+        <button onclick="toggleComments('${p.id}')" style="background:none;border:none;color:#666;cursor:pointer">
+          💬 ${p.comments.length} Comments
+        </button>
+      </div>
+      <div id="comments_${p.id}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9">
+        ${p.comments.map(c=>`<div style="margin-bottom:8px;padding:6px;background:#f8f9fa;border-radius:6px"><strong>${escapeHtml(c.authorName)}:</strong> ${escapeHtml(c.text)}</div>`).join('')}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="comment_${p.id}" placeholder="Write a comment..." style="flex:1;padding:6px;border:1px solid #ddd;border-radius:4px">
+          <button onclick="addComment('${p.id}')" class="btn" style="padding:6px 12px">Post</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // suggested connections
+  const suggestions = SAMPLE_CONNECTIONS.slice(0,6);
+  $('#suggestList').innerHTML = suggestions.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><div style="font-weight:700">${escapeHtml(s.fullName)}</div><div class="muted small">${escapeHtml(s.industry||s.city||'')}</div></div><div><button class="btn secondary" data-connect="${s.id}">Connected</button></div></div>`).join('');
+
+  // attach connect listeners
+  document.querySelectorAll('[data-connect]').forEach(btn=>{
+    btn.addEventListener('click', async () => {
+      const targetId = btn.getAttribute('data-connect');
+      const me = currentUser();
+      if(!me) return;
+      // find existing connection record
+      const existing = conns.find(c => (c.from===me.id && c.to===targetId) || (c.from===targetId && c.to===me.id));
+      if(existing){
+        if(existing.status === 'pending' && existing.to === me.id){
+          // accept incoming request
+          existing.status = 'accepted';
+          notifs.push({ id: uid(), userId: targetId, message: `${me.fullName} accepted your connection request.`, ts: now() });
+          save(DB.CONNS, conns);
+          save(DB.NOTIFS, notifs);
+          alert('Connection accepted');
+          renderHome();
+        } else {
+          // do nothing (already pending/outgoing/accepted)
+          if(existing.status === 'pending' && existing.from === me.id) alert('Request already sent');
+          if(existing.status === 'accepted') alert('Already connected');
+        }
+        return;
+      }
+      // create new pending connection
+      conns.push({ id: uid(), from: me.id, to: targetId, status: 'pending' });
+      notifs.push({ id: uid(), userId: targetId, message: `${me.fullName} sent you a connection request.`, ts: now() });
+      save(DB.CONNS, conns);
+      save(DB.NOTIFS, notifs);
+      alert('Connection request sent');
+      renderHome();
+    });
+  });
+}
+
+function connButtonLabel(targetId){
+  const me = currentUser();
+  if(!me) return 'Connect';
+  const rec = conns.find(c => (c.from===me.id && c.to===targetId) || (c.from===targetId && c.to===me.id));
+  if(!rec) return 'Connect';
+  if(rec.status === 'accepted') return 'Connected';
+  if(rec.status === 'pending'){
+    if(rec.from === me.id) return 'Request Sent';
+    if(rec.to === me.id) return 'Accept';
+  }
+  return 'Connect';
+}
+
+/* PROJECTS */
+function renderProjects(){
+  pageContainer.style.maxWidth = '1100px';
+  pageContainer.style.margin = '18px auto';
+  pageContainer.style.padding = '0 16px';
+  
+  const wrap = create('div');
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <h2>Projects</h2>
+      <button id="createProject" class="btn">Create Project</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:20px;align-items:center">
+      <button id="allProjectsTab" class="btn" style="background:#0ea5a4">All Projects</button>
+      <button id="myProjectsTab" class="btn secondary">My Projects</button>
+      <button id="myRequestsTab" class="btn secondary">My Requests</button>
+      <div style="flex:1"></div>
+      <select id="categoryFilter" style="padding:8px;border-radius:8px;border:1px solid #e6edf3">
+        <option value="">All Categories</option>
+        <option value="Web Development">Web Development</option>
+        <option value="Mobile App">Mobile App</option>
+        <option value="AI/ML">AI/ML</option>
+        <option value="Data Science">Data Science</option>
+        <option value="Game Development">Game Development</option>
+        <option value="Other">Other</option>
+      </select>
+      <select id="statusFilter" style="padding:8px;border-radius:8px;border:1px solid #e6edf3">
+        <option value="">All Status</option>
+        <option value="open">Open</option>
+        <option value="in-progress">In Progress</option>
+        <option value="completed">Completed</option>
+      </select>
+    </div>
+    <div id="projectsList"></div>
+  `;
+  pageContainer.appendChild(wrap);
+  
+  $('#createProject').onclick = showCreateProjectModal;
+  $('#categoryFilter').onchange = loadProjects;
+  $('#statusFilter').onchange = loadProjects;
+  $('#allProjectsTab').onclick = () => switchTab('all');
+  $('#myProjectsTab').onclick = () => switchTab('mine');
+  $('#myRequestsTab').onclick = () => switchTab('requests');
+  
+  window.currentProjectTab = 'all';
+  loadProjects();
+}
+
+function getUserProjects() {
+  return JSON.parse(localStorage.getItem('userProjects') || '[]');
+}
+
+function addUserProject(project) {
+  const projects = getUserProjects();
+  projects.push(project);
+  localStorage.setItem('userProjects', JSON.stringify(projects));
+}
+
+const SAMPLE_PROJECTS = [
+  {
+    _id: '1',
+    title: 'E-Commerce Platform',
+    description: 'Building a modern e-commerce platform with React and Node.js. Looking for frontend and backend developers.',
+    category: 'Web Development',
+    techStack: ['React', 'Node.js', 'MongoDB', 'Express'],
+    ownerId: 'sample1',
+    ownerName: 'Sarah Johnson',
+    status: 'open',
+    contributors: []
+  },
+  {
+    _id: '2',
+    title: 'AI Chatbot Assistant',
+    description: 'Developing an intelligent chatbot using NLP and machine learning. Need ML engineers and Python developers.',
+    category: 'AI/ML',
+    techStack: ['Python', 'TensorFlow', 'Flask', 'NLP'],
+    ownerId: 'sample2',
+    ownerName: 'Alex Chen',
+    status: 'in-progress',
+    contributors: [{ name: 'Mike Wilson', role: 'ML Engineer' }]
+  },
+  {
+    _id: '3',
+    title: 'Mobile Fitness App',
+    description: 'Cross-platform fitness tracking app with social features. Looking for mobile developers and UI/UX designers.',
+    category: 'Mobile App',
+    techStack: ['React Native', 'Firebase', 'Redux'],
+    ownerId: 'sample3',
+    ownerName: 'Emma Davis',
+    status: 'open',
+    contributors: []
+  },
+  {
+    _id: '4',
+    title: 'Data Analytics Dashboard',
+    description: 'Real-time analytics dashboard for business intelligence. Need data scientists and visualization experts.',
+    category: 'Data Science',
+    techStack: ['Python', 'Pandas', 'D3.js', 'PostgreSQL'],
+    ownerId: 'sample4',
+    ownerName: 'David Kumar',
+    status: 'open',
+    contributors: [{ name: 'Lisa Zhang', role: 'Data Scientist' }]
+  },
+  {
+    _id: '5',
+    title: '2D Puzzle Game',
+    description: 'Indie puzzle game with unique mechanics. Looking for game developers and artists.',
+    category: 'Game Development',
+    techStack: ['Unity', 'C#', 'Photoshop'],
+    ownerId: 'sample5',
+    ownerName: 'Ryan Miller',
+    status: 'in-progress',
+    contributors: [{ name: 'Sophie Brown', role: 'Artist' }]
+  },
+  {
+    _id: '6',
+    title: 'Blockchain Voting System',
+    description: 'Secure voting system using blockchain technology. Need blockchain developers and security experts.',
+    category: 'Other',
+    techStack: ['Solidity', 'Web3.js', 'Ethereum', 'React'],
+    ownerId: 'sample6',
+    ownerName: 'James Wilson',
+    status: 'open',
+    contributors: []
+  }
+];
+
+function switchTab(tab) {
+  window.currentProjectTab = tab;
+  const allTab = $('#allProjectsTab');
+  const mineTab = $('#myProjectsTab');
+  const requestsTab = $('#myRequestsTab');
+  
+  // Reset all tabs
+  allTab.className = 'btn secondary';
+  allTab.style.background = '';
+  mineTab.className = 'btn secondary';
+  mineTab.style.background = '';
+  requestsTab.className = 'btn secondary';
+  requestsTab.style.background = '';
+  
+  if (tab === 'all') {
+    allTab.className = 'btn';
+    allTab.style.background = '#0ea5a4';
+    $('#categoryFilter').style.display = 'block';
+    $('#statusFilter').style.display = 'block';
+  } else if (tab === 'mine') {
+    mineTab.className = 'btn';
+    mineTab.style.background = '#0ea5a4';
+    $('#categoryFilter').style.display = 'none';
+    $('#statusFilter').style.display = 'none';
+  } else {
+    requestsTab.className = 'btn';
+    requestsTab.style.background = '#0ea5a4';
+    $('#categoryFilter').style.display = 'none';
+    $('#statusFilter').style.display = 'none';
+  }
+  
+  loadProjects();
+}
+
+async function loadProjects() {
+  const list = $('#projectsList');
+  
+  if (window.currentProjectTab === 'requests') {
+    loadMyRequests();
+    return;
+  }
+  
+  if (window.currentProjectTab === 'mine') {
+    loadMyProjects();
+    return;
+  }
+  
+  let projects;
+  try {
+    projects = await apiCall('/projects');
+  } catch (error) {
+    // Silently use sample data when backend is not available
+    projects = SAMPLE_PROJECTS;
+  }
+  
+  const category = $('#categoryFilter')?.value || '';
+  const status = $('#statusFilter')?.value || '';
+  
+  const filtered = projects.filter(p => 
+    (!category || p.category === category) &&
+    (!status || p.status === status)
+  );
+  
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="card"><div class="muted">No projects found</div></div>';
+    return;
+  }
+  
+  list.innerHTML = filtered.map(p => {
+    const hasRequested = getMyRequests().some(r => r.projectId === p._id);
+    return `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div style="flex:1">
+          <h3 style="margin:0 0 8px 0">${escapeHtml(p.title)}</h3>
+          <p style="margin:0 0 12px 0;color:#666">${escapeHtml(p.description)}</p>
+          <div style="display:flex;gap:12px;margin-bottom:12px">
+            <span style="background:#e3f2fd;color:#1976d2;padding:4px 8px;border-radius:4px;font-size:12px">${escapeHtml(p.category)}</span>
+            <span style="background:#f3e5f5;color:#7b1fa2;padding:4px 8px;border-radius:4px;font-size:12px">${escapeHtml(p.status)}</span>
+          </div>
+          <div style="margin-bottom:12px">
+            <strong>Tech Stack:</strong> ${p.techStack.map(t => `<span style="background:#f5f5f5;padding:2px 6px;border-radius:3px;font-size:11px;margin-right:4px">${escapeHtml(t)}</span>`).join('')}
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="avatar" style="width:24px;height:24px;font-size:10px">${initials(p.ownerName)}</div>
+              <span style="font-size:14px;color:#666">by ${escapeHtml(p.ownerName)}</span>
+            </div>
+            <span style="font-size:12px;color:#999">${p.contributors.length} contributors</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${p.ownerId === currentUser()?._id ? 
+            `<button class="btn secondary" onclick="manageProject('${p._id}')">Manage</button>` :
+            hasRequested ? 
+            `<button class="btn secondary" disabled>Request Sent</button>` :
+            `<button class="btn" onclick="requestToJoin('${p._id}')">Request to Join</button>`
+          }
+        </div>
+      </div>
+    </div>
+  `}).join('');
+}
+
+function getMyRequests() {
+  return JSON.parse(localStorage.getItem('myProjectRequests') || '[]');
+}
+
+function addMyRequest(projectId, projectTitle, message) {
+  const requests = getMyRequests();
+  requests.push({
+    projectId,
+    projectTitle,
+    message,
+    status: 'pending',
+    requestedAt: new Date().toISOString()
+  });
+  localStorage.setItem('myProjectRequests', JSON.stringify(requests));
+}
+
+function loadMyRequests() {
+  const list = $('#projectsList');
+  const requests = getMyRequests();
+  
+  if (requests.length === 0) {
+    list.innerHTML = '<div class="card"><div class="muted">No project requests yet. Go to "All Projects" tab to request to join projects.</div></div>';
+    return;
+  }
+  
+  list.innerHTML = requests.map(r => `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div style="flex:1">
+          <h3 style="margin:0 0 8px 0">${escapeHtml(r.projectTitle)}</h3>
+          <p style="margin:0 0 12px 0;color:#666"><strong>Your message:</strong> "${escapeHtml(r.message)}"</p>
+          <div style="display:flex;gap:12px;margin-bottom:12px">
+            <span style="background:#fff3cd;color:#856404;padding:4px 8px;border-radius:4px;font-size:12px">${r.status}</span>
+            <span style="color:#666;font-size:12px">Requested: ${new Date(r.requestedAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn secondary" onclick="removeRequest('${r.projectId}')">Cancel Request</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function loadMyProjects() {
+  const user = currentUser();
+  if (!user) return;
+  
+  const list = $('#projectsList');
+  const userProjects = getUserProjects();
+  const sampleProjects = SAMPLE_PROJECTS.filter(p => p.ownerName === user.fullName);
+  const myProjects = [...userProjects, ...sampleProjects];
+  
+  if (myProjects.length === 0) {
+    list.innerHTML = '<div class="card"><div class="muted">You haven\'t created any projects yet. Click "Create Project" to get started.</div></div>';
+    return;
+  }
+  
+  list.innerHTML = myProjects.map(p => `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div style="flex:1">
+          <h3 style="margin:0 0 8px 0">${escapeHtml(p.title)}</h3>
+          <p style="margin:0 0 12px 0;color:#666">${escapeHtml(p.description)}</p>
+          <div style="display:flex;gap:12px;margin-bottom:12px">
+            <span style="background:#e3f2fd;color:#1976d2;padding:4px 8px;border-radius:4px;font-size:12px">${escapeHtml(p.category)}</span>
+            <span style="background:#f3e5f5;color:#7b1fa2;padding:4px 8px;border-radius:4px;font-size:12px">${escapeHtml(p.status)}</span>
+          </div>
+          <div style="margin-bottom:12px">
+            <strong>Tech Stack:</strong> ${p.techStack.map(t => `<span style="background:#f5f5f5;padding:2px 6px;border-radius:3px;font-size:11px;margin-right:4px">${escapeHtml(t)}</span>`).join('')}
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <span style="font-size:12px;color:#999">${p.contributors.length} contributors</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn" onclick="manageProject('${p._id}')">Manage Project</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function removeRequest(projectId) {
+  const requests = getMyRequests().filter(r => r.projectId !== projectId);
+  localStorage.setItem('myProjectRequests', JSON.stringify(requests));
+  loadProjects();
+}
+
+function showCreateProjectModal() {
+  const modal = create('div');
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+  modal.innerHTML = `
+    <div class="card" style="width:500px;max-height:80vh;overflow:auto">
+      <h3>Create New Project</h3>
+      <div style="margin-top:16px">
+        <input id="projectTitle" placeholder="Project Title" style="width:100%;margin-bottom:12px">
+        <textarea id="projectDesc" placeholder="Project Description" style="width:100%;margin-bottom:12px;min-height:80px"></textarea>
+        <select id="projectCategory" style="width:100%;margin-bottom:12px">
+          <option value="">Select Category</option>
+          <option value="Web Development">Web Development</option>
+          <option value="Mobile App">Mobile App</option>
+          <option value="AI/ML">AI/ML</option>
+          <option value="Data Science">Data Science</option>
+          <option value="Game Development">Game Development</option>
+          <option value="Other">Other</option>
+        </select>
+        <input id="projectTech" placeholder="Tech Stack (comma separated)" style="width:100%;margin-bottom:16px">
+        <div style="display:flex;gap:8px">
+          <button id="createBtn" class="btn">Create Project</button>
+          <button id="cancelBtn" class="btn secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  $('#cancelBtn').onclick = () => modal.remove();
+  $('#createBtn').onclick = async () => {
+    const title = $('#projectTitle').value.trim();
+    const description = $('#projectDesc').value.trim();
+    const category = $('#projectCategory').value;
+    const techStack = $('#projectTech').value.split(',').map(t => t.trim()).filter(Boolean);
+    
+    if (!title || !description || !category) {
+      alert('Please fill all required fields');
+      return;
+    }
+    
+    const user = currentUser();
+    const newProject = {
+      _id: Date.now().toString(),
+      title,
+      description,
+      category,
+      techStack,
+      ownerId: user.id,
+      ownerName: user.fullName,
+      status: 'open',
+      contributors: []
+    };
+    
+    try {
+      await apiCall('/projects', {
+        method: 'POST',
+        body: JSON.stringify({ title, description, category, techStack })
+      });
+      addUserProject(newProject);
+      modal.remove();
+      switchTab('mine');
+    } catch (error) {
+      if (error.message === 'BACKEND_OFFLINE') {
+        addUserProject(newProject);
+        modal.remove();
+        switchTab('mine');
+      } else {
+        alert('Error creating project: ' + error.message);
+      }
+    }
+  };
+}
+
+async function requestToJoin(projectId) {
+  const message = prompt('Why do you want to join this project?');
+  if (!message) return;
+  
+  // Find project title for tracking
+  const projects = SAMPLE_PROJECTS;
+  const project = projects.find(p => p._id === projectId);
+  const projectTitle = project ? project.title : 'Unknown Project';
+  
+  try {
+    await apiCall(`/projects/${projectId}/request`, {
+      method: 'POST',
+      body: JSON.stringify({ message })
+    });
+    addMyRequest(projectId, projectTitle, message);
+    alert('Request sent successfully!');
+    loadProjects();
+  } catch (error) {
+    // Handle case when backend is not running
+    if (error.message === 'BACKEND_OFFLINE') {
+      addMyRequest(projectId, projectTitle, message);
+      alert('Demo mode: Request tracked locally!');
+      loadProjects();
+    } else {
+      alert('Error: ' + error.message);
+    }
+  }
+}
+
+function manageProject(projectId) {
+  alert('Project management features coming soon!');
+}
+
+const SAMPLE_CONNECTIONS = [
+  { id: '1', fullName: 'Sarah Johnson', headline: 'Senior Frontend Developer at TechCorp', industry: 'Technology', city: 'San Francisco' },
+  { id: '2', fullName: 'Alex Chen', headline: 'AI/ML Engineer at DataFlow', industry: 'Artificial Intelligence', city: 'Seattle' },
+  { id: '3', fullName: 'Emma Davis', headline: 'Product Manager at StartupX', industry: 'Product Management', city: 'New York' },
+  { id: '4', fullName: 'David Kumar', headline: 'Data Scientist at Analytics Pro', industry: 'Data Science', city: 'Austin' },
+  { id: '5', fullName: 'Ryan Miller', headline: 'Game Developer at Indie Studios', industry: 'Gaming', city: 'Los Angeles' },
+  { id: '6', fullName: 'Lisa Zhang', headline: 'UX Designer at Design Hub', industry: 'Design', city: 'Chicago' },
+  { id: '7', fullName: 'James Wilson', headline: 'Blockchain Developer at CryptoTech', industry: 'Blockchain', city: 'Miami' },
+  { id: '8', fullName: 'Sophie Brown', headline: 'Digital Marketing Manager at GrowthCo', industry: 'Marketing', city: 'Denver' }
+];
+
+/* NETWORK */
+function renderNetwork(){
+  pageContainer.style.maxWidth = '1100px';
+  pageContainer.style.margin = '18px auto';
+  pageContainer.style.padding = '0 16px';
+  
+  const wrap = create('div');
+  wrap.innerHTML = `
+    <h2>My Network</h2>
+    <div style="display:flex;gap:20px;margin-top:20px">
+      <div class="card" style="flex:2">
+        <h3>My Connections (${SAMPLE_CONNECTIONS.length})</h3>
+        <div style="margin-top:15px">
+          ${SAMPLE_CONNECTIONS.map(conn => `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid #f1f5f9">
+              <div class="avatar" style="width:48px;height:48px;font-size:14px">${initials(conn.fullName)}</div>
+              <div style="flex:1">
+                <div style="font-weight:600">${escapeHtml(conn.fullName)}</div>
+                <div class="muted small">${escapeHtml(conn.headline)}</div>
+                <div class="muted small">${escapeHtml(conn.city)} • ${escapeHtml(conn.industry)}</div>
+              </div>
+              <button class="btn secondary" onclick="messageConnection('${conn.id}')">Message</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div class="card" style="flex:1">
+        <h3>Network Stats</h3>
+        <div style="margin-top:15px">
+          <div style="padding:10px;background:#f8fafc;border-radius:8px;margin-bottom:10px">
+            <div style="font-weight:600;color:#0ea5a4">${SAMPLE_CONNECTIONS.length}</div>
+            <div class="small muted">Total Connections</div>
+          </div>
+          <div style="padding:10px;background:#f8fafc;border-radius:8px;margin-bottom:10px">
+            <div style="font-weight:600;color:#0ea5a4">${new Set(SAMPLE_CONNECTIONS.map(c => c.industry)).size}</div>
+            <div class="small muted">Industries</div>
+          </div>
+          <div style="padding:10px;background:#f8fafc;border-radius:8px">
+            <div style="font-weight:600;color:#0ea5a4">${new Set(SAMPLE_CONNECTIONS.map(c => c.city)).size}</div>
+            <div class="small muted">Cities</div>
+          </div>
+        </div>
+        <div style="margin-top:20px">
+          <h4>Top Industries</h4>
+          ${Object.entries(SAMPLE_CONNECTIONS.reduce((acc, conn) => {
+            acc[conn.industry] = (acc[conn.industry] || 0) + 1;
+            return acc;
+          }, {})).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([industry, count]) => `
+            <div style="display:flex;justify-content:space-between;padding:4px 0">
+              <span class="small">${escapeHtml(industry)}</span>
+              <span class="small muted">${count}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+  pageContainer.appendChild(wrap);
+}
+
+function messageConnection(connectionId) {
+  const conn = SAMPLE_CONNECTIONS.find(c => c.id === connectionId);
+  if (conn) {
+    alert(`Opening message thread with ${conn.fullName}`);
+    navigate('messages');
+  }
+}
+
+/* MESSAGES (comprehensive messaging system) */
+function renderMessages(){
+  const wrap = create('div');
+  wrap.innerHTML = `
+    <div style="display:flex;gap:20px">
+      <div class="card" style="width:280px">
+        <div style="display:flex;gap:8px;margin-bottom:15px">
+          <button id="showChats" class="btn" style="flex:1">Chats</button>
+          <button id="showUsers" class="btn secondary" style="flex:1">Users</button>
+          <button id="createGroup" class="btn secondary">+ Group</button>
+        </div>
+        <div id="chatsList"></div>
+        <div id="usersList" style="display:none"></div>
+      </div>
+      <div class="card" style="flex:1">
+        <div id="chatHeader" style="border-bottom:1px solid #f1f5f9;padding:10px;font-weight:600">Select a chat</div>
+        <div id="chatArea" style="height:400px;overflow:auto;padding:8px;background:#f8f9fa">Select a contact or group to start messaging</div>
+        <div id="chatInput" style="display:none;margin-top:8px">
+          <div style="display:flex;gap:8px">
+            <input id="msgText" placeholder="Type a message" style="flex:1">
+            <button id="sendMsg" class="btn">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  pageContainer.appendChild(wrap);
+  
+  const me = currentUser();
+  const allUsers = [...SAMPLE_CONNECTIONS, ...Object.values(JSON.parse(localStorage.getItem('demoUsers') || '{}'))];
+  let groups = JSON.parse(localStorage.getItem('chatGroups') || '[]');
+  let currentChat = null;
+  
+  $('#showChats').onclick = () => {
+    $('#showChats').className = 'btn';
+    $('#showUsers').className = 'btn secondary';
+    $('#chatsList').style.display = 'block';
+    $('#usersList').style.display = 'none';
+    loadChats();
+  };
+  
+  $('#showUsers').onclick = () => {
+    $('#showChats').className = 'btn secondary';
+    $('#showUsers').className = 'btn';
+    $('#chatsList').style.display = 'none';
+    $('#usersList').style.display = 'block';
+    loadUsers();
+  };
+  
+  $('#createGroup').onclick = () => {
+    const groupName = prompt('Enter group name:');
+    if (!groupName) return;
+    
+    const newGroup = {
+      id: uid(),
+      name: groupName,
+      members: [me.id],
+      admin: me.id,
+      created: now()
+    };
+    
+    groups.push(newGroup);
+    localStorage.setItem('chatGroups', JSON.stringify(groups));
+    loadChats();
+  };
+  
+  function loadChats() {
+    const chatsList = $('#chatsList');
+    const recentChats = Object.keys(messages).map(key => {
+      const msgs = messages[key];
+      if (!msgs.length) return null;
+      const lastMsg = msgs[msgs.length - 1];
+      const otherUserId = key.split('_').find(id => id !== me.id);
+      const otherUser = allUsers.find(u => u.id === otherUserId);
+      return otherUser ? { ...otherUser, lastMsg, key } : null;
+    }).filter(Boolean);
+    
+    chatsList.innerHTML = `
+      <h4>Recent Chats</h4>
+      ${recentChats.map(chat => `
+        <div style="padding:8px;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openDirectChat('${chat.id}')">
+          <div style="font-weight:600">${escapeHtml(chat.fullName)}</div>
+          <div class="muted small">${escapeHtml(chat.lastMsg.text.substring(0, 30))}...</div>
+        </div>
+      `).join('')}
+      <h4 style="margin-top:15px">Groups</h4>
+      ${groups.map(group => `
+        <div style="padding:8px;border-bottom:1px solid #f1f5f9;cursor:pointer" onclick="openGroupChat('${group.id}')">
+          <div style="font-weight:600">👥 ${escapeHtml(group.name)}</div>
+          <div class="muted small">${group.members.length} members</div>
+        </div>
+      `).join('')}
+    `;
+  }
+  
+  function loadUsers() {
+    const usersList = $('#usersList');
+    usersList.innerHTML = `
+      <h4>All Users</h4>
+      ${allUsers.filter(u => u.id !== me.id).map(user => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #f1f5f9">
+          <div class="avatar" style="width:32px;height:32px;font-size:12px">${initials(user.fullName)}</div>
+          <div style="flex:1">
+            <div style="font-weight:600">${escapeHtml(user.fullName)}</div>
+            <div class="muted small">${escapeHtml(user.headline || user.email || '')}</div>
+          </div>
+          <button class="btn secondary" onclick="openDirectChat('${user.id}')">Chat</button>
+        </div>
+      `).join('')}
+    `;
+  }
+  
+  window.openDirectChat = function(userId) {
+    const user = allUsers.find(u => u.id === userId);
+    if (!user) return;
+    
+    currentChat = { type: 'direct', id: userId, name: user.fullName };
+    const pair = [me.id, userId].sort().join('_');
+    const convo = messages[pair] || [];
+    
+    $('#chatHeader').textContent = user.fullName;
+    $('#chatArea').innerHTML = convo.map(m => `
+      <div class="bubble ${m.from === me.id ? 'me' : 'them'}" style="margin-bottom:8px">
+        ${escapeHtml(m.text)}
+      </div>
+    `).join('');
+    $('#chatInput').style.display = 'block';
+    
+    $('#sendMsg').onclick = () => {
+      const text = $('#msgText').value.trim();
+      if (!text) return;
+      
+      const msg = { id: uid(), from: me.id, to: userId, text, ts: now() };
+      messages[pair] = [...(messages[pair] || []), msg];
+      save(DB.MESSAGES, messages);
+      $('#msgText').value = '';
+      openDirectChat(userId);
+    };
+  };
+  
+  window.openGroupChat = function(groupId) {
+    const group = groups.find(g => g.id === groupId);
+    if (!group) return;
+    
+    currentChat = { type: 'group', id: groupId, name: group.name };
+    const groupKey = `group_${groupId}`;
+    const convo = messages[groupKey] || [];
+    
+    $('#chatHeader').innerHTML = `
+      👥 ${escapeHtml(group.name)} (${group.members.length} members)
+      ${group.admin === me.id ? `<button class="btn secondary" onclick="manageGroup('${groupId}')" style="float:right;padding:4px 8px;font-size:12px">Manage</button>` : ''}
+    `;
+    
+    $('#chatArea').innerHTML = convo.map(m => {
+      const sender = allUsers.find(u => u.id === m.from) || { fullName: 'Unknown' };
+      return `
+        <div class="bubble ${m.from === me.id ? 'me' : 'them'}" style="margin-bottom:8px">
+          ${m.from !== me.id ? `<div style="font-size:11px;color:#666;margin-bottom:2px">${escapeHtml(sender.fullName)}</div>` : ''}
+          ${escapeHtml(m.text)}
+        </div>
+      `;
+    }).join('');
+    $('#chatInput').style.display = 'block';
+    
+    $('#sendMsg').onclick = () => {
+      const text = $('#msgText').value.trim();
+      if (!text) return;
+      
+      const msg = { id: uid(), from: me.id, text, ts: now() };
+      messages[groupKey] = [...(messages[groupKey] || []), msg];
+      save(DB.MESSAGES, messages);
+      $('#msgText').value = '';
+      openGroupChat(groupId);
+    };
+  };
+  
+  window.manageGroup = function(groupId) {
+    const group = groups.find(g => g.id === groupId);
+    if (!group || group.admin !== me.id) return;
+    
+    const action = prompt('Choose action: "add" to add member, "remove" to remove member, "delete" to delete group');
+    
+    if (action === 'add') {
+      const availableUsers = allUsers.filter(u => !group.members.includes(u.id) && u.id !== me.id);
+      if (availableUsers.length === 0) {
+        alert('No users available to add');
+        return;
+      }
+      
+      const userList = availableUsers.map((u, i) => `${i + 1}. ${u.fullName}`).join('\n');
+      const selection = prompt(`Select user to add:\n${userList}\n\nEnter number:`);
+      const userIndex = parseInt(selection) - 1;
+      
+      if (userIndex >= 0 && userIndex < availableUsers.length) {
+        group.members.push(availableUsers[userIndex].id);
+        localStorage.setItem('chatGroups', JSON.stringify(groups));
+        alert('User added to group');
+        openGroupChat(groupId);
+      }
+    } else if (action === 'remove') {
+      const groupMembers = group.members.filter(id => id !== me.id).map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+      if (groupMembers.length === 0) {
+        alert('No members to remove');
+        return;
+      }
+      
+      const memberList = groupMembers.map((u, i) => `${i + 1}. ${u.fullName}`).join('\n');
+      const selection = prompt(`Select member to remove:\n${memberList}\n\nEnter number:`);
+      const memberIndex = parseInt(selection) - 1;
+      
+      if (memberIndex >= 0 && memberIndex < groupMembers.length) {
+        group.members = group.members.filter(id => id !== groupMembers[memberIndex].id);
+        localStorage.setItem('chatGroups', JSON.stringify(groups));
+        alert('Member removed from group');
+        openGroupChat(groupId);
+      }
+    } else if (action === 'delete') {
+      if (confirm('Are you sure you want to delete this group?')) {
+        groups = groups.filter(g => g.id !== groupId);
+        localStorage.setItem('chatGroups', JSON.stringify(groups));
+        delete messages[`group_${groupId}`];
+        save(DB.MESSAGES, messages);
+        alert('Group deleted');
+        loadChats();
+        $('#chatArea').innerHTML = 'Select a contact or group to start messaging';
+        $('#chatInput').style.display = 'none';
+      }
+    }
+  };
+  
+  loadChats();
+}
+
+/* NOTIFICATIONS */
+function renderNotifications(){
+  const wrap = create('div','card');
+  const mine = notifs.filter(n => n.userId === currentUser().id);
+  wrap.innerHTML = `<h3>Notifications</h3><div>${mine.length? mine.map(n=>`<div style="padding:8px;border-top:1px solid #f1f5f9"><div>${escapeHtml(n.message)}</div><div class="muted small">${new Date(n.ts).toLocaleString()}</div></div>`).join('') : 'No notifications yet.'}</div>`;
+  pageContainer.appendChild(wrap);
+}
+
+/* PROFILE (view + edit) */
+function renderProfile(){
+  const u = currentUser();
+  const wrap = create('div','card');
+  wrap.innerHTML = `<div style="display:flex;gap:12px"><div style="width:120px"><div class="avatar" id="profileAvatar" style="width:120px;height:120px;overflow:hidden">${u.photo?`<img src="${u.photo}" style="width:100%;height:100%;object-fit:cover">`:`${initials(u.fullName)}`}</div></div><div style="flex:1"><div style="font-weight:700">${escapeHtml(u.fullName)}</div><div class="muted small">${escapeHtml(u.headline||'No headline')}</div><div style="margin-top:8px"><button id="editProfile" class="btn secondary">Edit Profile</button></div></div></div><div id="profileDetails" style="margin-top:12px"><h4>About</h4><div class="muted small">${escapeHtml(u.about||'Not added')}</div><h4 style="margin-top:10px">Skills</h4><div class="muted small">${(u.skills||[]).join(', ')}</div></div>`;
+  pageContainer.appendChild(wrap);
+
+  $('#editProfile').onclick = ()=> {
+    // Prevent multiple modals
+    if (document.querySelector('#profileEditModal')) return;
+    
+    const modal = create('div');
+    modal.id = 'profileEditModal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+    modal.innerHTML = `
+      <div class="card" style="width:500px;max-height:80vh;overflow:auto">
+        <h3>Edit Profile</h3>
+        <div style="margin-top:16px">
+          <input id="pfName" placeholder="Full Name" value="${escapeHtml(u.fullName)}" style="width:100%;margin-bottom:12px">
+          <input id="pfHeadline" placeholder="Professional Headline" value="${escapeHtml(u.headline||'')}" style="width:100%;margin-bottom:12px">
+          <textarea id="pfAbout" placeholder="About" style="width:100%;margin-bottom:12px;min-height:80px">${escapeHtml(u.about||'')}</textarea>
+          <input id="pfSkills" placeholder="Skills (comma separated)" value="${(u.skills||[]).join(', ')}" style="width:100%;margin-bottom:12px">
+          <input type="file" id="pfPhoto" accept="image/*" style="width:100%;margin-bottom:16px">
+          <div style="display:flex;gap:8px">
+            <button id="savePf" class="btn">Save Changes</button>
+            <button id="cancelPf" class="btn secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    
+    $('#cancelPf').onclick = ()=> modal.remove();
+    $('#savePf').onclick = ()=> {
+      const name = $('#pfName').value.trim(), head = $('#pfHeadline').value.trim(), about = $('#pfAbout').value.trim(), skills = $('#pfSkills').value.split(',').map(s=>s.trim()).filter(Boolean);
+      const file = $('#pfPhoto').files[0];
+      
+      function doSave(photoData){
+        // Update currentUserData and save to user-specific localStorage
+        currentUserData = {...currentUserData, fullName:name, headline:head, about, skills, photo:photoData};
+        const userKey = `profile_${currentUserData.email || currentUserData.id}`;
+        localStorage.setItem(userKey, JSON.stringify(currentUserData));
+        modal.remove();
+        pageContainer.innerHTML = ''; // Clear existing content
+        renderProfile();
+        renderHeader();
+      }
+      
+      if(file){
+        const r = new FileReader();
+        r.onload = e => doSave(e.target.result);
+        r.readAsDataURL(file);
+      } else doSave(u.photo || '');
+    }
+  }
+}
+
+/* -------------------- QUIZ BANK (full set from your original) -------------------- */
+const QUIZ_BANK = {
+  "Information Technology": [
+    { q: "Which of these is not a programming language?", options:["Python","HTML","Java","C++"], answer:1, topic:"Basics" },
+    { q: "Which data structure uses LIFO?", options:["Queue","Stack","Tree","Graph"], answer:1, topic:"Data Structures" },
+    { q: "Time complexity of binary search on sorted array?", options:["O(n)","O(log n)","O(n log n)","O(1)"], answer:1, topic:"Algorithms" },
+    { q: "Which protocol is used by the web (for loading pages)?", options:["FTP","HTTP","SMTP","SSH"], answer:1, topic:"Networking" },
+    { q: "What does SQL stand for?", options:["Structured Query Language","Simple Query List","System Query Logic","Structured Quick Lookup"], answer:0, topic:"Databases" },
+    { q: "Which is a NoSQL database?", options:["MySQL","MongoDB","PostgreSQL","SQLite"], answer:1, topic:"Databases" },
+    { q: "Which JS keyword declares a block-scoped variable?", options:["var","let","def","const"], answer:1, topic:"Languages" },
+    { q: "HTTP status code 404 means:", options:["Server Error","Not Found","OK","Unauthorized"], answer:1, topic:"Networking" },
+    { q: "Which sorting algorithm is typically fastest on average?", options:["Bubble Sort","Selection Sort","Quick Sort","Insertion Sort"], answer:2, topic:"Algorithms" },
+    { q: "What does CSS do?", options:["Structure page data","Style the web page","Manage databases","Handle server-side logic"], answer:1, topic:"Frontend" },
+    { q: "Which is a frontend framework?", options:["Django","React","Laravel","Flask"], answer:1, topic:"Frontend" },
+    { q: "Which is used for containerization?", options:["Git","Docker","Jenkins","Webpack"], answer:1, topic:"DevOps" },
+    { q: "CI/CD is part of which domain?", options:["Security","DevOps","Design","Data Science"], answer:1, topic:"DevOps" },
+    { q: "Which is a version control system?", options:["Git","S3","Nginx","Redis"], answer:0, topic:"Best Practices" },
+    { q: "Which principle improves code maintainability?", options:["Spaghetti code","Modularity","Global variables use","No comments"], answer:1, topic:"Best Practices" },
+    { q: "What is a REST API?", options:["A UI toolkit","Architectural style for web services","Database type","A CSS framework"], answer:1, topic:"System Design" },
+    { q: "Load balancing helps with:", options:["Single server overload","Database normalization","UI design","Code minification"], answer:0, topic:"System Design" },
+    { q: "Which is an authentication protocol?", options:["OAuth2","SMTP","FTP","HTTP"], answer:0, topic:"Security" },
+    { q: "XSS is a type of:", options:["Database engine","Attack (vulnerability)","Encryption method","Testing tool"], answer:1, topic:"Security" },
+    { q: "Which tool is for monitoring/logs?", options:["Prometheus","HTML","CSS","SVG"], answer:0, topic:"DevOps" }
+  ],
+  "Marketing": [
+    { q: "What does SEO stand for?", options:["Search Engine Optimization","Social Engagement Operation","Sales Execution Order","Systematic Event Optimization"], answer:0, topic:"Digital Marketing" },
+    { q: "Which metric measures brand loyalty?", options:["Bounce Rate","Conversion Rate","Net Promoter Score (NPS)","Impressions"], answer:2, topic:"Analytics" },
+    { q: "A/B testing is used to:", options:["Design logos","Compare two variants","Encrypt data","Write copy faster"], answer:1, topic:"Testing" },
+    { q: "CPC means:", options:["Cost Per Click","Customer Paid Cost","Central Processing Cost","Clicks Per Customer"], answer:0, topic:"Paid Media" },
+    { q: "Which channel is best for B2B professional networking?", options:["Instagram","LinkedIn","Pinterest","Snapchat"], answer:1, topic:"Channels" },
+    { q: "Content marketing primarily focuses on:", options:["Short ads","Valuable content to attract users","Only paid search","Email blasts"], answer:1, topic:"Content" },
+    { q: "Which tool is for email marketing?", options:["Mailchimp","Docker","GitHub","Figma"], answer:0, topic:"Channels" },
+    { q: "Which is a key KPI for email?", options:["Open Rate","CSS Size","Server Uptime","Image Resolution"], answer:0, topic:"Analytics" },
+    { q: "SEO on-page optimization includes:", options:["Backlinks only","Meta tags and content","Server configuration only","App design"], answer:1, topic:"SEO" },
+    { q: "Backlinks mainly help with:", options:["Server speed","Search ranking","Image quality","UX"], answer:1, topic:"SEO" },
+    { q: "Which measure shows ad reach?", options:["CTR","Impressions","Load Time","Sessions"], answer:1, topic:"Analytics" },
+    { q: "Influencer marketing is best for:", options:["Niche trust-driven campaigns","Database optimization","Server scaling","Financial auditing"], answer:0, topic:"Channels" },
+    { q: "Which is a paid advertising platform?", options:["Google Ads","WordPress","Vercel","SQLite"], answer:0, topic:"Paid Media" },
+    { q: "Marketing funnel top stage is:", options:["Awareness","Conversion","Retention","Advocacy"], answer:0, topic:"Strategy" },
+    { q: "Customer segmentation helps to:", options:["Build servers","Target users with relevant messaging","Encrypt data","Design icons"], answer:1, topic:"Strategy" },
+    { q: "Which is an organic growth tactic?", options:["Paid ads","SEO content","Buying emails","Cookie stuffing"], answer:1, topic:"Growth" },
+    { q: "Which is important for local SEO?", options:["Local citations and Google My Business","Only social posts","DNS records","Server logs"], answer:0, topic:"SEO" },
+    { q: "What does CTR measure?", options:["Click-through rate","Customer time ratio","Content traffic rate","Conversion total rate"], answer:0, topic:"Analytics" },
+    { q: "Retargeting helps to:", options:["Remind users who visited before","Secure the site","Change DNS","Create images"], answer:0, topic:"Paid Media" },
+    { q: "A marketing persona is:", options:["A fictional audience profile","A UI component","Web server","Encryption key"], answer:0, topic:"Strategy" }
+  ],
+  "Finance": [
+    { q: "What does ROI stand for?", options:["Return on Investment","Rate of Income","Revenue on Investment","Risk of Interest"], answer:0, topic:"Basics" },
+    { q: "Which financial statement shows profits?", options:["Balance Sheet","Income Statement","Trial Balance","Supplier Ledger"], answer:1, topic:"Accounting" },
+    { q: "What is diversification?", options:["Investing in many assets to reduce risk","Putting all money in one stock","Only using cash","Hiding assets"], answer:0, topic:"Investment" },
+    { q: "What is a bond?", options:["Equity instrument","Debt instrument","Derivative","Real asset"], answer:1, topic:"Markets" },
+    { q: "NASDAQ is a:", options:["Bank","Stock exchange","Accounting standard","Insurance company"], answer:1, topic:"Markets" },
+    { q: "Compound interest means:", options:["Interest on principal only","Interest on principal and previous interest","No interest","Flat fee"], answer:1, topic:"Basics" },
+    { q: "Which ratio measures liquidity?", options:["Current Ratio","PE Ratio","Beta","ROI"], answer:0, topic:"Analysis" },
+    { q: "Which is a stock valuation metric?", options:["PE Ratio","HTTP","CSS","SQL"], answer:0, topic:"Analysis" },
+    { q: "What is an ETF?", options:["Exchange Traded Fund","Electronic Transfer Form","Estimated Tax Fee","Equity Transfer Fund"], answer:0, topic:"Markets" },
+    { q: "Inflation typically does what to currency value?", options:["Increases value","Decreases value","No effect","Creates extra currency"], answer:1, topic:"Macro" },
+    { q: "What is working capital?", options:["Current assets minus current liabilities","Total revenue","Equity only","Fixed assets"], answer:0, topic:"Accounting" },
+    { q: "What is EBITDA used for?", options:["Measure operating performance","Design websites","Encrypt files","Schedule posts"], answer:0, topic:"Analysis" },
+    { q: "What is dollar-cost averaging?", options:["Invest fixed amounts regularly","Invest all money at once","Avoid markets","Only invest in dollars"], answer:0, topic:"Investment" },
+    { q: "Which instrument is short-term debt?", options:["Treasury bill","Corporate bond long term","Equity share","Real estate"], answer:0, topic:"Markets" },
+    { q: "What does 'liquidity' mean?", options:["Ease of converting to cash","Profitability","Stock price movement","Legal status"], answer:0, topic:"Basics" },
+    { q: "What does 'beta' measure?", options:["Volatility relative to market","Interest rate","Company age","Tax rate"], answer:0, topic:"Analysis" },
+    { q: "A high PE ratio might indicate:", options:["Undervalued stock","Overvalued or high growth expectations","Bankruptcy","Insider trading"], answer:1, topic:"Analysis" },
+    { q: "Which asset class is least liquid?", options:["Real estate","Stocks","Cash","Treasury bills"], answer:0, topic:"Markets" },
+    { q: "What is a budget?", options:["Plan for income and expenses","Computer program","Legal contract","Design template"], answer:0, topic:"Basics" },
+    { q: "Why diversify across asset classes?", options:["To increase risk","To reduce unsystematic risk","To hide money","To pay fewer taxes"], answer:1, topic:"Investment" }
+  ],
+  "Design": [
+    { q: "Which color model is used for printing?", options:["RGB","CMYK","HSV","HSL"], answer:1, topic:"Color Theory" },
+    { q: "What does typography study?", options:["Layouts","Fonts and text","Server configs","Marketing data"], answer:1, topic:"Typography" },
+    { q: "Which principle concerns visual stability?", options:["Balance","Opacity","Saturation","Compression"], answer:0, topic:"Principles" },
+    { q: "What is whitespace used for?", options:["Filling space","Improving readability and layout","Adding color","Encrypting images"], answer:1, topic:"Layout" },
+    { q: "A wireframe is used to:", options:["Code the site","Plan layout structure","Optimize images","Write content"], answer:1, topic:"Process" },
+    { q: "Which file format is vector-based?", options:["PNG","SVG","JPEG","BMP"], answer:1, topic:"Tools" },
+    { q: "What does UX focus on?", options:["User experience and ease of use","Only graphics","Server speed","Database normalization"], answer:0, topic:"UX" },
+    { q: "What is contrast used for?", options:["Security","Emphasis and readability","SEO","Data storage"], answer:1, topic:"Principles" },
+    { q: "What is responsive design?", options:["A design that adapts to screen sizes","Fast loading visuals","Static images","Only mobile apps"], answer:0, topic:"Frontend" },
+    { q: "Which tool is commonly used for UI design?", options:["Photoshop","Figma","MySQL","Node.js"], answer:1, topic:"Tools" },
+    { q: "Hierarchy in design helps to:", options:["Reduce server load","Guide user's attention","Encrypt content","Schedule posts"], answer:1, topic:"Principles" },
+    { q: "Gestalt principles relate to:", options:["Human perception in design","Database schemas","API endpoints","CSS resets"], answer:0, topic:"UX" },
+    { q: "Which property improves accessibility?", options:["Low color contrast","Proper semantic HTML","Hidden text","Small font"], answer:1, topic:"Accessibility" },
+    { q: "Which font type is best for body text (generally)?", options:["Display fonts","Serif or sans-serif readable fonts","Script fonts only","Monospace always"], answer:1, topic:"Typography" },
+    { q: "What is a design system?", options:["A collection of reusable UI components and guidelines","A hosting server","A database","A type of font"], answer:0, topic:"Process" },
+    { q: "What does 'affordance' mean in UI?", options:["Visual cues that indicate how to use a control","Color theory","File format","Encryption method"], answer:0, topic:"UX" },
+    { q: "Accessibility helps users with:", options:["Disabilities","Fewer servers","Better SEO only","Faster loading"], answer:0, topic:"Accessibility" },
+    { q: "Which is a key deliverable in UX research?", options:["Personas","Docker images","SQL backups","Unit tests"], answer:0, topic:"Process" },
+    { q: "Color contrast ratio is important for:", options:["Aesthetics only","Readability & accessibility","Server speed","Version control"], answer:1, topic:"Accessibility" },
+    { q: "What is prototyping used for?", options:["Testing interactions quickly","Final production build","Database indexing","Automated backups"], answer:0, topic:"Process" }
+  ],
+  "Artificial Intelligence": [
+    { q: "What is supervised learning?", options:["Learning without labels","Learning with labeled data","Unsupervised clustering","Reinforcement only"], answer:1, topic:"Machine Learning" },
+    { q: "Which algorithm is used for classification?", options:["K-Means","Linear Regression","Decision Trees","Apriori"], answer:2, topic:"Algorithms" },
+    { q: "NLP stands for:", options:["Neural Processing Link","Natural Language Processing","Network Language Protocol","Normalized Linear Programming"], answer:1, topic:"Basics" },
+    { q: "Which loss is common for regression?", options:["Cross-entropy","MSE (Mean Squared Error)","BLEU score","IoU"], answer:1, topic:"Evaluation" },
+    { q: "Overfitting means:", options:["Model generalizes well","Model performs well on training but poorly on new data","No learning","Faster inference"], answer:1, topic:"Modeling" },
+    { q: "Which is a common deep learning framework?", options:["TensorFlow","WordPress","Excel","Photoshop"], answer:0, topic:"Tools" },
+    { q: "What is a neural network layer type used for images?", options:["LSTM","Conv (Convolutional)","RNN","ARIMA"], answer:1, topic:"Deep Learning" },
+    { q: "What does 'epoch' mean in training?", options:["One pass over the entire dataset","Single sample update","Model architecture","Loss function"], answer:0, topic:"Training" },
+    { q: "What is reinforcement learning based on?", options:["Rewards and penalties","Supervised labels","Only unsupervised clustering","Static rules"], answer:0, topic:"Reinforcement" },
+    { q: "Which metric is used for classification evaluation?", options:["RMSE","Accuracy","MAE","PSNR"], answer:1, topic:"Evaluation" },
+    { q: "Word embeddings map words to:", options:["Images","Vectors","HTML elements","SQL tables"], answer:1, topic:"NLP" },
+    { q: "What is transfer learning?", options:["Training from scratch only","Using pre-trained models and fine-tuning","Removing data","Only for supervised learning"], answer:1, topic:"Modeling" },
+    { q: "Which technique reduces overfitting?", options:["Dropout","More layers always","No validation set","Decrease data"], answer:0, topic:"Modeling" },
+    { q: "What is 'precision' in classification?", options:["Proportion of true positives among predicted positives","Proportion of true positives among actual positives","Sum of errors","Model size"], answer:0, topic:"Evaluation" },
+    { q: "Beam search is used in:", options:["Image segmentation","Sequence generation (NLP)","Database indexing","CSS layout"], answer:1, topic:"NLP" },
+    { q: "Which is unsupervised learning?", options:["K-Means clustering","Linear regression with labels","Classification tree","Q-learning"], answer:0, topic:"Algorithms" },
+    { q: "A confusion matrix shows:", options:["Model's false/true positive/negative counts","Tensor shapes","Network speed","Dataset size"], answer:0, topic:"Evaluation" },
+    { q: "Which is used for object detection?", options:["R-CNN","KNN","Apriori","SVM"], answer:0, topic:"Deep Learning" },
+    { q: "GANs are used to:", options:["Generate realistic data","Optimize SQL","Compress images only","Encrypt data"], answer:0, topic:"Generative Models" },
+    { q: "Attention mechanisms are important for:", options:["Sequence modelling and Transformers","Only images","Database queries","Version control"], answer:0, topic:"Deep Learning" }
+  ]
+};
+
+/* ---------- QUIZ PAGES & LOGIC ---------- */
+function renderQuiz(){
+  const wrap = create('div','card');
+  wrap.innerHTML = `
+    <h3>Domain Quizzes (20 questions each)</h3>
+    <div class="muted small">Choose a domain and take the 20-question quiz. After submitting, you'll get an analysis showing your weakest topics.</div>
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+      <select id="domainSelect" style="flex:1">
+        <option value="">-- Select domain --</option>
+        ${Object.keys(QUIZ_BANK).map(d=>`<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('')}
+      </select>
+      <button id="startQuiz" class="btn">Start Quiz</button>
+      <button id="viewHistory" class="btn secondary">View My Quiz History</button>
+    </div>
+    <div id="quizArea" style="margin-top:14px"></div>
+  `;
+  pageContainer.appendChild(wrap);
+
+  $('#startQuiz').onclick = () => {
+    const domain = $('#domainSelect').value;
+    if(!domain) return alert('Choose a domain');
+    startQuiz(domain);
+  };
+  $('#viewHistory').onclick = () => showHistory();
+}
+
+function startQuiz(domain){
+  const qs = (QUIZ_BANK[domain] || []).slice(0, 20);
+  if(qs.length < 1) return alert('No questions found for domain');
+
+  const area = $('#quizArea');
+  area.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-weight:700">${escapeHtml(domain)} — Quiz</div>
+      <div class="muted small">Questions: ${qs.length}</div>
+    </div>
+    <div id="qList" style="margin-top:12px"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:12px">
+      <button id="cancelQuiz" class="btn secondary">Cancel</button>
+      <button id="submitQuiz" class="btn">Submit Answers</button>
+    </div>
+  `;
+  const qList = $('#qList');
+
+  qList.innerHTML = qs.map((q,i)=>`
+    <div class="question" data-idx="${i}">
+      <div style="font-weight:600">${i+1}. ${escapeHtml(q.q)}</div>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">${q.options.map((opt,oi)=>`<label class="option" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:8px 0"><span style="flex:1;text-align:left">${escapeHtml(opt)}</span><input type="radio" name="q_${i}" value="${oi}" style="margin:0;margin-left:20px;flex-shrink:0"></label>`).join('')}</div>
+    </div>
+  `).join('');
+
+  $('#cancelQuiz').onclick = ()=> { area.innerHTML = ''; };
+  $('#submitQuiz').onclick = ()=> {
+    const user = currentUser();
+    if(!user) { alert('Please sign in to submit the quiz.'); return navigate('login'); }
+    const chosen = Array.from({ length: qs.length }).map((_,i)=> {
+      const r = qList.querySelector(`input[name="q_${i}"]:checked`);
+      return r ? Number(r.value) : -1;
+    });
+    const result = gradeQuiz(domain, qs, chosen);
+    const userId = user.id;
+    if(!quizStore[userId]) quizStore[userId] = [];
+    quizStore[userId].push(result);
+    save(DB.QUIZ, quizStore);
+    area.innerHTML = renderQuizReport(result);
+  };
+}
+
+function gradeQuiz(domain, questions, answers){
+  let correct = 0;
+  const topicStats = {};
+  questions.forEach((q,i)=>{
+    const a = answers[i];
+    const ok = a === q.answer;
+    if(ok) correct++;
+    const t = q.topic || 'General';
+    if(!topicStats[t]) topicStats[t] = { total:0, correct:0 };
+    topicStats[t].total++;
+    if(ok) topicStats[t].correct++;
+  });
+  const total = questions.length;
+  const percent = Math.round((correct/total)*100);
+  const topicResults = Object.entries(topicStats).map(([topic,s])=>({ topic, total:s.total, correct:s.correct, percent: Math.round((s.correct/s.total)*100) })).sort((a,b)=>a.percent-b.percent);
+  const weaknesses = topicResults.slice(0,3);
+  return { id: uid(), userId: currentUser().id, domain, total, correct, percent, topicResults, weaknesses, ts: now() };
+}
+
+function renderQuizReport(r){
+  const when = new Date(r.ts).toLocaleString();
+  const weakHtml = r.weaknesses.map(w=>`<li><span class="weak">${escapeHtml(w.topic)}</span> — ${w.percent}% (${w.correct}/${w.total})</li>`).join('');
+  const topicBreakdown = r.topicResults.map(t=>`<tr><td>${escapeHtml(t.topic)}</td><td>${t.correct}/${t.total}</td><td>${t.percent}%</td></tr>`).join('');
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><h3>Quiz Report — ${escapeHtml(r.domain)}</h3><div class="muted small">Taken: ${when}</div></div>
+        <div style="text-align:right"><div style="font-size:20px;font-weight:700">${r.percent}%</div><div class="muted small">${r.correct}/${r.total} correct</div></div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:600">Weakest topics</div>
+        <ol class="muted small">${weakHtml}</ol>
+      </div>
+
+      <div style="margin-top:12px">
+        <div style="font-weight:600">Full topic breakdown</div>
+        <table style="width:100%;margin-top:6px;border-collapse:collapse">
+          <thead><tr style="text-align:left"><th>Topic</th><th>Correct</th><th>Percent</th></tr></thead>
+          <tbody>${topicBreakdown}</tbody>
+        </table>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;margin-top:12px">
+        <div><button class="btn secondary" id="retake">Retake Same Quiz</button></div>
+        <div>
+          <button class="btn" id="viewMore">View My Attempts</button>
+          <button class="btn secondary" id="done">Done</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showHistory(){
+  const userId = currentUser().id;
+  const attempts = (quizStore[userId] || []).slice().reverse();
+  const area = $('#quizArea');
+  if(!area){ alert('Open Quiz page first.'); return; }
+  if(attempts.length===0){ area.innerHTML = `<div class="card"><div class="muted small">No quiz attempts yet. Start a quiz to create results.</div></div>`; return; }
+  area.innerHTML = `<div style="font-weight:700">My Quiz Attempts</div><div style="margin-top:8px">${attempts.map(a=>`<div style="padding:8px;border-top:1px solid #f1f5f9"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${escapeHtml(a.domain)}</div><div class="muted small">${new Date(a.ts).toLocaleString()}</div></div><div style="text-align:right"><div style="font-weight:700">${a.percent}%</div><div class="muted small">${a.correct}/${a.total}</div></div></div><div style="margin-top:6px" class="muted small">Weak: ${a.weaknesses.map(w=>escapeHtml(w.topic)+' ('+w.percent+'%)').join(', ')}</div></div>`).join('')}</div>`;
+}
+
+/* delegate quiz buttons */
+document.addEventListener('click', (e)=>{
+  if(e.target.matches('#retake')){
+    const domain = document.querySelector('.card h3')?.textContent?.replace('Quiz Report — ','') || '';
+    if(domain) startQuiz(domain);
+  }
+  if(e.target.matches('#viewMore')) showHistory();
+  if(e.target.matches('#done')) { $('#quizArea').innerHTML = ''; }
+});
+
+/* --------------- init --------------- */
+async function init() {
+  await loadCurrentUser();
+  renderHeader();
+  navigate(authToken ? 'home' : 'login');
+}
+
+init();
+window.navigate = navigate;
+  </script>
+</body>
+</html>
+
